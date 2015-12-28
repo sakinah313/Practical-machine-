@@ -1,0 +1,175 @@
+---
+title: "Assessment PML"
+author: "sakinah"
+date: "December 27, 2015"
+output: html_document
+---
+In this project, our goal is to use data about personal activity from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: 
+http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Executive summary
+
+This analysis will help to quantify how well the self movement activity called weight lifting exercises based on the data collected from the device. The total number of predictors are 159 and the there are five classes for the outcome variables.
+
+
+## Data Getting
+The training data : 
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+The test data : 
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The source of the data is: http://groupware.les.inf.puc-rio.br/har.  
+
+
+``` {r }
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest) #needed just in case caret's train function does not work properly
+```
+
+## Load data
+
+```{r}
+if(file.exists("training.csv")) {
+    message("data files are present on hard drive")
+  }  else {
+    message("no data file found on hard drive, downloading from sources")
+    trainURL <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+    testURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+    download.file(trainURL, destfile="training.csv")
+    download.file(testURL, destfile="testing.csv")
+  }
+    
+trainData <- read.csv("training.csv", na.strings = c("NA", "", "#DIV/0!"))
+testData <- read.csv("testing.csv", na.strings = c("NA", "", "#DIV/0!"))
+
+```
+
+## Data Preprocessing
+
+The model that we going to use is random forest. Therefore the data must be checked for possible missing values. Only column with 70% of the data filled will be used for decision making.
+
+```{r}
+#summary(trainData) 
+
+#loop through variables and remove junks
+naVector <-vector()
+for(i in 1:length(trainData)) { 
+  if(any(is.na(trainData[, i]))) {
+    naVector<-c(naVector,i)
+  }
+}
+trainData<-trainData[,-naVector]
+trainData<-trainData[,-c(1:7)] #remove user ids and timestamps
+#head(trainData)
+#str(trainData)
+#nearZeroVar(trainData, saveMetrics = TRUE) #video lecture "covariate creation" at 11min mark. No near zero var was found, so no need to eliminate additional variables.
+```
+
+
+## Using PCA 
+
+Below is the code for determining variable with high correlations. Many correlated variables, will need PCA preprocess?
+
+Other students reported on the forum that there is no benefit to include PCA for random forest. From the actual results, excluding PCA increased accuracy from 90% to 97%. So no need to include pca during data traing after all.
+
+```{r, eval=F}
+M<-abs(cor(trainData[,-53]))
+diag(M)<-0
+which(M>.8,arr.ind=T) #
+```
+
+## Data Partitioning
+
+From community tips, split training Data into 3 sets (60/20/20). If use a slow computer, lower training set to 15% to process in reasonable time.
+
+UPDATE: use the native randomForest function to train instead of the train function in caret.  This will be much faster and no crashes.
+
+The course's TAs clarifications -> use the downloaded training data to train and test/cross validate. Use the testing set (downloaded) to submit answer to the online tests.
+
+```{r}
+inTrain <- createDataPartition(trainData$classe, p = 0.6)[[1]]
+CV <- trainData[-inTrain,]
+training <- trainData[ inTrain,]
+inTrain <- createDataPartition(CV$classe, p = 0.5)[[1]]
+CVTest <- CV[ -inTrain,]
+CV <- CV[inTrain,]
+
+dim(training);dim(CVTest);dim(CV)
+```
+
+## The Random Forest model
+
+Using the caret package to train takes longer and often experience crashes or hang.  The accuracy here is only 97%. The bigger training data set can increase the accuracy (use more powerful computer to find out). 
+
+UPDATE: The native randomForest function can train faster without crashes, and able to train a large data set in reasonable time.
+
+```{r}
+rfFit <- randomForest(classe ~. , data=training)
+rfPredict <- predict(rfFit, CV)
+confusionMatrix(rfPredict, CV$classe)
+rfPredict1 <- predict(rfFit, CVTest)
+confusionMatrix(rfPredict1, CVTest$classe)
+```
+
+The code below are for the tree partition model and the boost model, they are not ran because the script crashes with too many models. The tree model is only 55% accurate, and the boost model is 95% accurate (compare to 97% accuracy rate of the RandomForest model)
+
+```{r, eval=FALSE}
+treeFit <- train(classe~., method="rpart",data=training) 
+# preProcess=c("center","scale","pca"), trControl = trainControl(method = "cv", number=3)
+treeFit$finalModel
+treePredict <- predict(treeFit, CV)
+confusionMatrix(treePredict, CV$classe)
+treePredict1 <- predict(treeFit, CVTest)
+confusionMatrix(treePredict1, CVTest$classe)
+
+#better training function for tree, run faster and no error, must include "class" param to generate correct data for confusion matrix
+treeFit <- rpart (classe ~ ., data=training, method="class")
+treePredict <- predict(treeFit, CV, type="class")
+confusionMatrix(treePredict, CV$classe)
+
+
+boostFit <- train(factor(classe)~., method="gbm",data=training, verbose=F, trControl = trainControl(method = "cv", number=3)) # preProcess=c("center","scale","pca"), trControl = trainControl(method = "cv", number=3)
+boostFit$finalModel
+boostPredict <- predict(boostFit, CV)
+confusionMatrix(boostPredict, CV$classe)
+boostPredict1 <- predict(boostFit, CVTest)
+confusionMatrix(boostPredict1, CVTest$classe)
+
+```
+
+## Submission process
+
+Process testData set the same way as the trainData set. Predict the testData against the rfFit model, the outcome will be a dataframe of 20 answers. Use the outcome as the parameter of the project's given function to create 20 individual text files. Use the text files to submit. 
+
+```{r, eval=FALSE}
+naVector <-vector()
+for(i in 1:length(testData)) { 
+  if(any(is.na(testData[, i]))) {
+    naVector<-c(naVector,i)
+  }
+}
+testData<-testData[,-naVector]
+testData<-testData[,-c(1:7)] 
+str(testData)
+
+rfPredictTestData <- predict(rfFit, testData)
+rfPredictTestData
+
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(rfPredictTestData)
+
+```
+
+## Conclusions
+
+The random forest model provides the best prediction accuracy for this data set.  PCA preprocess actually decrease accuracy for this data set. The accuracy for out of sample data is less than the accuracy rate of the training sample (for all models, as expected).  How much less is depending upon the accuracy of the training set, which depends on the size of the training data set.
+
